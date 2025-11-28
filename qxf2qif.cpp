@@ -61,7 +61,7 @@ static char *strcasestr_simple(const char *hay, const char *needle) {
  * Writes at most out_len-1 bytes to out (null terminated).
  * Returns 1 if found and written, 0 if not found.
  */
-static int extract_tag_content(const char *start, const char *tag, char *out, size_t out_len) {
+static int extract_tag_content_original(const char *start, const char *tag, char *out, size_t out_len) {
     char opentag[64], closetag[64];
     const char *p, *q;
     size_t tlen = strlen(tag);
@@ -98,6 +98,76 @@ static int extract_tag_content(const char *start, const char *tag, char *out, si
         out[copylen] = '\0';
         return 1;
     }
+}
+
+/*
+ * Extracts the text content of an OFX/QFX tag without advancing block_start.
+ *
+ * Supports both long tags (<TAG>value</TAG>) and short tags (<TAG>value<OTHER>),
+ * and tolerates missing closing tags (common in QFX).
+ *
+ * Parameters:
+ *   src      = pointer to the start of the STMTTRN block
+ *   tag      = name of the tag without angle brackets, e.g. "NAME"
+ *   out      = destination buffer
+ *   outsize  = size of the destination buffer
+ */
+void extract_tag_content(const char *src, const char *tag,
+                         char *out, size_t outsize)
+{
+    /* Initialize output */
+    if (outsize > 0)
+        out[0] = '\0';
+
+    if (!src || !tag || !out || outsize == 0)
+        return;
+
+    char open_tag[64];
+    char close_tag[64];
+
+    /* Build tag strings */
+    snprintf(open_tag, sizeof(open_tag), "<%s>", tag);
+    snprintf(close_tag, sizeof(close_tag), "</%s>", tag);
+
+    const char *p = strstr(src, open_tag);
+    if (!p)
+        return;   /* Tag not found */
+
+    p += strlen(open_tag);  /* Move past <TAG> */
+
+    /* Try to find the closing tag */
+    const char *q = strstr(p, close_tag);
+
+    if (q) {
+        /* Normal long-tag case <TAG>value</TAG> */
+        size_t len = q - p;
+        if (len >= outsize) len = outsize - 1;
+        memcpy(out, p, len);
+        out[len] = '\0';
+        return;
+    }
+
+    /*
+     * No </TAG> found → short-tag extraction.
+     *
+     * Short-tag syntax (common in QFX):
+     *     <NAME>Payment to Card<MEMO>Some memo here
+     * OR
+     *     <TRNAMT>-25.62
+     *
+     * We stop at:
+     *   - the next '<'
+     *   - end of string
+     */
+    q = strchr(p, '<');  /* Start of next tag */
+    if (!q)
+        q = p + strlen(p);  /* End of string */
+
+    size_t len = q - p;
+    if (len >= outsize) len = outsize - 1;
+
+    memcpy(out, p, len);
+    out[len] = '\0';
 }
 
 /* Trim leading and trailing whitespace in place */
