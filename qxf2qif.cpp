@@ -18,7 +18,7 @@
 
 #define MAX_FIELD 4096
 
-const char *SW_VERSION =    "1.00";
+const char *SW_VERSION =    "1.01";
 const char *SW_DATE =       "2025-11-28";
 
 /* Read whole file into a malloc'd buffer. Returns pointer and sets length.
@@ -160,6 +160,7 @@ void usage(const char *prog, const char *extraLine)
     fprintf(stderr, "-o --output filename      output .qif file.\n");
     fprintf(stderr, "                          Filename will be generated from input filename\n");
     fprintf(stderr, "                          if not provided.\n");
+    fprintf(stderr, "-m --memo                 Include memos.\n");
     fprintf(stderr, "-q --quiet                Quiet running (or decrease verbosity).\n");
     fprintf(stderr, "-v --verbose              Increase verbosity\n");
     if (extraLine) fprintf(stderr, "\n%s\n", extraLine);
@@ -174,6 +175,8 @@ int main(int argc, char *argv[])
     char                *cp;
     int                 verbosity = 1;
     int                 numTransactions = 0;
+    bool                memoFlag = false;
+    bool                printMemoWarning = false;
 
     inFileName[0] = '\0';
     outFileName[0] = '\0';
@@ -182,6 +185,7 @@ int main(int argc, char *argv[])
         {
             {"input",       required_argument,  0,      'i'}
             ,{"output",     required_argument,  0,      'o'}
+            ,{"memo",       no_argument,        0,      'm'}
             ,{"quiet",      no_argument,        0,      'q'}
             ,{"verbose",    no_argument,        0,      'v'}
             ,{0,0,0,0}
@@ -190,7 +194,7 @@ int main(int argc, char *argv[])
     while (1)
     {
         int optionIndex = 0;
-        opt = getopt_long(argc, argv, "i:o:qv", longOptions, &optionIndex);
+        opt = getopt_long(argc, argv, "i:o:mqv", longOptions, &optionIndex);
 
         if (-1 == opt) break;
 
@@ -201,6 +205,9 @@ int main(int argc, char *argv[])
             break;
         case 'o':
             strncpy(outFileName, optarg, sizeof(outFileName)-1);
+            break;
+        case 'm':
+            memoFlag = true;
             break;
         case 'q':
             --verbosity;
@@ -289,19 +296,22 @@ int main(int argc, char *argv[])
         char dtposted[MAX_FIELD] = {0};
         char trnamt[MAX_FIELD] = {0};
         char name[MAX_FIELD] = {0};
+        char memo[MAX_FIELD] = {0};
 
         /* Extract tags from block_start (which points at content after opening <STMTTRN>) */
         extract_tag_content(block_start, "DTPOSTED", dtposted, sizeof(dtposted));
         extract_tag_content(block_start, "TRNAMT", trnamt, sizeof(trnamt));
         extract_tag_content(block_start, "NAME", name, sizeof(name));
-        /* sometimes <NAME> may be absent and <MEMO> used; try MEMO if name empty */
-        if (name[0] == '\0') {
-            extract_tag_content(block_start, "MEMO", name, sizeof(name));
-        }
+        extract_tag_content(block_start, "MEMO", memo, sizeof(memo));
 
         trim_inplace(dtposted);
         trim_inplace(trnamt);
         trim_inplace(name);
+        trim_inplace(memo);
+
+        /* sanitize name and memo: remove newlines */
+        for (char *p = name; *p; ++p) if (*p == '\r' || *p == '\n') *p = ' ';
+        for (char *p = memo; *p; ++p) if (*p == '\r' || *p == '\n') *p = ' ';
 
         /* convert date */
         char qifdate[16] = {0};
@@ -363,6 +373,13 @@ int main(int argc, char *argv[])
             fprintf(fout, "P%s\n", name);
         }
 
+        if (memo[0]) {
+            if (memoFlag) {
+                fprintf(fout, "M%s\n", memo);  // <-- MEMO line added
+            } else {
+                printMemoWarning = true;
+            }
+        }
         fprintf(fout, "T%s\n", amt_clean);
         fprintf(fout, "C*\n");
         fprintf(fout, "^\n");
@@ -371,7 +388,10 @@ int main(int argc, char *argv[])
 
         if  (verbosity >= 2)
         {
-            printf("%s\t%.16s\t$%s\n", qifdate, name, amt_clean);
+            if (memo[0] && !memoFlag) {
+                strncpy(memo, "EXCLUDED", 9);
+            }
+            printf("%s\t%.16s\t%.8s\t$%s\n", qifdate, name, memo, amt_clean);
         }
 
         scan = block_after;
@@ -385,6 +405,12 @@ int main(int argc, char *argv[])
         printf("Input File            : %s\n", inFileName);
         printf("Output File           : %s\n", outFileName);
         printf("Number of Transactions: %d\n", numTransactions);
+    }
+
+    if (printMemoWarning)
+    {
+        fprintf(stderr, "Memos appear in input file but are excluded from output.\n");
+        fprintf(stderr, "Use -m to include memos in output.\n");
     }
 
     return 0;
