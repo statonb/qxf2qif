@@ -343,13 +343,13 @@ int main(int argc, char *argv[])
     long len;
     char *buf = read_file_all(inFileName, &len);
     if (!buf) {
-        usage("Error reading input file");
+        usage(basename(argv[0]), "Error reading input file");
         return -4;
     }
 
     FILE *fout = fopen(outFileName, "w");
     if (!fout) {
-        usage("Error opening output file");
+        usage(basename(argv[0]), "Error opening output file");
         free(buf);
         return -5;
     }
